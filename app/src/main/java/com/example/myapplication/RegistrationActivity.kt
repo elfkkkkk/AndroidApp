@@ -1,5 +1,6 @@
 package com.example.myapplication
 
+import android.content.Intent
 import android.os.Bundle
 import android.text.Editable
 import android.text.TextWatcher
@@ -33,6 +34,8 @@ class RegistrationActivity : AppCompatActivity() {
     private lateinit var ivResultZodiac: ImageView
     private lateinit var llResult: LinearLayout
     private lateinit var tvResultTitle: TextView
+    private lateinit var btnBackToMain: Button  // Кнопка после регистрации
+    private lateinit var btnBackFromForm: Button  // Новая кнопка назад с формы
 
     private var selectedZodiac: String = ""
     private var isFormValid: Boolean = false
@@ -47,6 +50,7 @@ class RegistrationActivity : AppCompatActivity() {
         setupBirthDateInput()
         setupFormValidation()
         setupSubmitButton()
+        setupBackButtons()  // Настраиваем обе кнопки назад
     }
 
     private fun initViews() {
@@ -62,6 +66,27 @@ class RegistrationActivity : AppCompatActivity() {
         ivResultZodiac = findViewById(R.id.ivResultZodiac)
         llResult = findViewById(R.id.llResult)
         tvResultTitle = findViewById(R.id.tvResultTitle)
+        btnBackToMain = findViewById(R.id.btnBackToMain)  // Кнопка после регистрации
+        btnBackFromForm = findViewById(R.id.btnBackFromForm)  // Новая кнопка с формы
+    }
+
+    private fun setupBackButtons() {
+        // Кнопка "Назад" с формы (всегда видна)
+        btnBackFromForm.setOnClickListener {
+            returnToMain()
+        }
+
+        // Кнопка "← На главный" после регистрации
+        btnBackToMain.setOnClickListener {
+            returnToMain()
+        }
+    }
+
+    private fun returnToMain() {
+        // Возвращаемся на главный экран
+        val intent = Intent(this, MainActivity::class.java)
+        startActivity(intent)
+        finish()  // Закрываем текущую активность
     }
 
     private fun setupCourseSpinner() {
@@ -188,8 +213,8 @@ class RegistrationActivity : AppCompatActivity() {
     private fun createPlayer(): Player {
         val fullName = etFullName.text.toString()
         val gender = if (rgGender.checkedRadioButtonId == R.id.rbMale) "Male" else "Female"
-        val course = spCourse.selectedItemPosition + 1
-        val difficulty = sbDifficulty.progress
+        val course = spCourse.selectedItemPosition + 1  // Int
+        val difficulty = sbDifficulty.progress  // Int
 
         // Parse birth date
         val dateText = etBirthDate.text.toString()
@@ -200,7 +225,7 @@ class RegistrationActivity : AppCompatActivity() {
 
         val calendar = Calendar.getInstance()
         calendar.set(year, month, day)
-        val birthDate = calendar.timeInMillis
+        val birthDate = calendar.timeInMillis  // Long
 
         return Player(fullName, gender, course, difficulty, birthDate, selectedZodiac)
     }
@@ -261,6 +286,7 @@ class RegistrationActivity : AppCompatActivity() {
         // Show result section and hide input section
         tvResultTitle.visibility = TextView.VISIBLE
         llResult.visibility = LinearLayout.VISIBLE
+        btnBackToMain.visibility = Button.VISIBLE  // Показываем кнопку назад после регистрации
 
         // Hide input fields
         etFullName.visibility = TextView.GONE
@@ -271,8 +297,7 @@ class RegistrationActivity : AppCompatActivity() {
         etBirthDate.visibility = TextView.GONE
         ivZodiac.visibility = ImageView.GONE
         btnSubmit.visibility = Button.GONE
-
-        // Hide labels
+        btnBackFromForm.visibility = Button.GONE  // Скрываем кнопку назад с формы
 
         Toast.makeText(this, "Registration successful!", Toast.LENGTH_SHORT).show()
     }
