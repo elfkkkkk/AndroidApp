@@ -41,6 +41,39 @@ class MainActivity : ComponentActivity() {
     }
 }
 
+@Composable
+fun GameLaunchButton() {
+    val context = LocalContext.current
+
+    Button(
+        onClick = {
+            // Загружаем настройки и запускаем игру
+            val settingsRepository = SettingsRepository(context)
+            val gameSettings = settingsRepository.getAllSettings()
+
+            val intent = Intent(context, GameActivity::class.java).apply {
+                putExtra("game_speed", gameSettings.gameSpeed)
+                putExtra("max_cockroaches", gameSettings.maxCockroaches)
+                putExtra("bonus_interval", gameSettings.bonusInterval)
+                putExtra("round_duration", gameSettings.roundDuration)
+            }
+            context.startActivity(intent)
+        },
+        modifier = Modifier
+            .fillMaxWidth()
+            .height(60.dp),
+        colors = ButtonDefaults.buttonColors(
+            containerColor = MaterialTheme.colorScheme.primaryContainer,
+            contentColor = MaterialTheme.colorScheme.onPrimaryContainer
+        )
+    ) {
+        Text(
+            text = "🎮 НАЧАТЬ ИГРУ",
+            style = MaterialTheme.typography.titleMedium
+        )
+    }
+}
+
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun MainScreen() {
@@ -51,16 +84,30 @@ fun MainScreen() {
     Scaffold(
         modifier = Modifier.fillMaxSize(),
         bottomBar = {
-            Button(
-                onClick = {
-                    val intent = Intent(context, RegistrationActivity::class.java)
-                    context.startActivity(intent)
-                },
+            Column(
                 modifier = Modifier
                     .fillMaxWidth()
                     .padding(16.dp)
             ) {
-                Text("Зарегистрироваться")
+                // Кнопка регистрации
+                Button(
+                    onClick = {
+                        val intent = Intent(context, RegistrationActivity::class.java)
+                        context.startActivity(intent)
+                    },
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(bottom = 8.dp)
+                        .height(60.dp),
+                ) {
+                    Text(
+                        text = "Зарегистрироваться",
+                        style = MaterialTheme.typography.titleMedium
+                    )
+                }
+
+                // Кнопка запуска игры
+                GameLaunchButton()
             }
         }
     ) { innerPadding ->
