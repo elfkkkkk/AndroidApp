@@ -9,6 +9,7 @@ import android.os.Bundle
 import android.os.CountDownTimer
 import android.os.Handler
 import android.os.Looper
+import android.util.Log
 import android.view.MotionEvent
 import android.view.View
 import android.widget.FrameLayout
@@ -16,6 +17,9 @@ import android.widget.ImageView
 import android.widget.TextView
 import androidx.appcompat.app.AlertDialog
 import androidx.appcompat.app.AppCompatActivity
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.launch
 import kotlin.random.Random
 
 class GameActivity : AppCompatActivity() {
@@ -28,6 +32,10 @@ class GameActivity : AppCompatActivity() {
     private var gameSpeed = 5
     private var maxCockroaches = 10
     private var roundDuration = 60
+
+    private var playerId: Long = -1L
+    private var playerName: String = ""
+    private lateinit var gameRepository: GameRepository
 
     private val activeCockroaches = mutableListOf<ImageView>()
     private val handler = Handler(Looper.getMainLooper())
@@ -45,15 +53,29 @@ class GameActivity : AppCompatActivity() {
         super.onCreate(savedInstanceState)
         setContentView(R.layout.activity_game)
 
-        // Получаем настройки из Intent
         gameSpeed = intent.getIntExtra("game_speed", 5)
         maxCockroaches = intent.getIntExtra("max_cockroaches", 10)
-        roundDuration = intent.getIntExtra("round_duration", 60) * 1000 // в миллисекунды
 
-        // Инициализация View
+
+        val roundDurationSeconds = intent.getIntExtra("round_duration", 60)
+        roundDuration = roundDurationSeconds * 1000
+
+        playerId = intent.getLongExtra("player_id", -1L)
+        playerName = intent.getStringExtra("player_name") ?: "Unknown"
+
+        Log.d("GameActivity", "Настройки игры:")
+        Log.d("GameActivity", " - Скорость: $gameSpeed")
+        Log.d("GameActivity", " - Макс. тараканов: $maxCockroaches")
+        Log.d("GameActivity", " - Длительность раунда: ${roundDuration / 1000} сек")
+        Log.d("GameActivity", " - Игрок: $playerName (ID: $playerId)")
+
+        gameRepository = GameRepository(AppDatabase.getInstance(this))
+
         gameContainer = findViewById(R.id.gameContainer)
         scoreTextView = findViewById(R.id.scoreTextView)
         timerTextView = findViewById(R.id.timerTextView)
+
+        updateScore()
 
         startGame()
     }
@@ -62,6 +84,8 @@ class GameActivity : AppCompatActivity() {
         score = 0
         updateScore()
 
+        Log.d("GameActivity", "Запуск игры на ${roundDuration / 1000} секунд")
+
         countDownTimer = object : CountDownTimer(roundDuration.toLong(), 1000) {
             override fun onTick(millisUntilFinished: Long) {
                 val secondsLeft = millisUntilFinished / 1000
@@ -69,6 +93,7 @@ class GameActivity : AppCompatActivity() {
             }
 
             override fun onFinish() {
+                Log.d("GameActivity", "Время вышло! Финальный счет: $score")
                 endGame()
             }
         }.start()
@@ -89,7 +114,9 @@ class GameActivity : AppCompatActivity() {
     }
 
     private fun calculateSpawnInterval(): Long {
-        return (2000 - (gameSpeed * 150)).toLong()
+        val interval = (2000 - (gameSpeed * 150)).toLong()
+        Log.d("GameActivity", "Интервал появления: $interval мс")
+        return interval
     }
 
     private fun spawnInsect() {
@@ -98,7 +125,6 @@ class GameActivity : AppCompatActivity() {
             setImageResource(randomInsect)
             layoutParams = FrameLayout.LayoutParams(120, 120)
 
-            // Случайная позиция на экране
             val containerWidth = gameContainer.width
             val containerHeight = gameContainer.height
 
@@ -110,12 +136,10 @@ class GameActivity : AppCompatActivity() {
                 y = 100f
             }
 
-            // Анимация появления
             alpha = 0f
             animate().alpha(1f).duration = 500
         }
 
-        // Добавляем обработчик касания
         insectView.setOnTouchListener { _, event ->
             if (event.action == MotionEvent.ACTION_DOWN) {
                 killInsect(insectView, true)
@@ -129,6 +153,8 @@ class GameActivity : AppCompatActivity() {
         activeCockroaches.add(insectView)
 
         startInsectMovement(insectView)
+
+        Log.d("GameActivity", "Появилось насекомое. Всего: ${activeCockroaches.size}")
     }
 
     private fun startInsectMovement(insect: ImageView) {
@@ -136,7 +162,7 @@ class GameActivity : AppCompatActivity() {
             override fun run() {
                 if (activeCockroaches.contains(insect)) {
                     moveInsect(insect)
-                    handler.postDelayed(this, 50) // Частота обновления движения
+                    handler.postDelayed(this, 50)
                 }
             }
         }
@@ -154,7 +180,6 @@ class GameActivity : AppCompatActivity() {
         var newX = insect.x + directionX * speed
         var newY = insect.y + directionY * speed
 
-        // Проверка границ экрана
         if (newX < 0) newX = 0f
         if (newX > containerWidth - insect.width) newX = (containerWidth - insect.width).toFloat()
         if (newY < 0) newY = 0f
@@ -166,23 +191,22 @@ class GameActivity : AppCompatActivity() {
 
     private fun killInsect(insect: ImageView, isHit: Boolean) {
         if (isHit) {
-            // Попадание - начисляем очки
             score += 10
-            updateScore()
+            Log.d("GameActivity", "Попадание! +10 очков. Текущий счет: $score")
         } else {
-            // Промах - штраф
             score -= 5
             if (score < 0) score = 0
-            updateScore()
+            Log.d("GameActivity", "Промах! -5 очков. Текущий счет: $score")
         }
+        updateScore()
 
-        // Анимация уничтожения
         ObjectAnimator.ofFloat(insect, "scaleX", 1f, 0f).apply {
             duration = 200
             addListener(object : AnimatorListenerAdapter() {
                 override fun onAnimationEnd(animation: Animator) {
                     gameContainer.removeView(insect)
                     activeCockroaches.remove(insect)
+                    Log.d("GameActivity", "Насекомое уничтожено. Осталось: ${activeCockroaches.size}")
                 }
             })
             start()
@@ -191,14 +215,40 @@ class GameActivity : AppCompatActivity() {
     }
 
     private fun updateScore() {
-        scoreTextView.text = "Очки: $score"
+        scoreTextView.text = "Игрок: $playerName | Очки: $score"
     }
 
     private fun endGame() {
+        Log.d("GameActivity", "Завершение игры...")
         handler.removeCallbacksAndMessages(null)
         countDownTimer.cancel()
 
-        // Удаляем всех насекомых
+        CoroutineScope(Dispatchers.IO).launch {
+            if (playerId != -1L) {
+                try {
+                    val scoreEntity = ScoreEntity(
+                        playerId = playerId,
+                        score = score,
+                        difficulty = gameSpeed
+                    )
+                    val scoreId = gameRepository.insertScore(scoreEntity)
+                    Log.d("GameActivity", "Результат сохранен в БД. ID записи: $scoreId")
+
+                    val topScores = gameRepository.getTopScoresWithPlayerInfo()
+                    topScores.collect { scores ->
+                        Log.d("GameActivity", "Топ рекордов в БД: ${scores.size} записей")
+                        scores.forEachIndexed { index, scoreRecord ->
+                            Log.d("GameActivity", "  ${index + 1}. ${scoreRecord.playerName}: ${scoreRecord.score} очков")
+                        }
+                    }
+                } catch (e: Exception) {
+                    Log.e("GameActivity", "Ошибка сохранения результата: ${e.message}")
+                }
+            } else {
+                Log.w("GameActivity", "Не удалось сохранить результат: ID игрока невалиден")
+            }
+        }
+
         activeCockroaches.forEach { insect ->
             gameContainer.removeView(insect)
         }
@@ -210,7 +260,7 @@ class GameActivity : AppCompatActivity() {
     private fun showGameOverDialog() {
         AlertDialog.Builder(this)
             .setTitle("Игра окончена!")
-            .setMessage("Ваши очки: $score")
+            .setMessage("Игрок: $playerName\nВаши очки: $score\nДлительность: ${roundDuration / 1000} сек")
             .setPositiveButton("OK") { dialog: DialogInterface, _: Int ->
                 dialog.dismiss()
                 finish()
@@ -221,9 +271,11 @@ class GameActivity : AppCompatActivity() {
 
     override fun onDestroy() {
         super.onDestroy()
+        Log.d("GameActivity", "onDestroy: очистка ресурсов")
         handler.removeCallbacksAndMessages(null)
         if (::countDownTimer.isInitialized) {
             countDownTimer.cancel()
         }
+        activeCockroaches.clear()
     }
 }

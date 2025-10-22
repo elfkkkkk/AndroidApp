@@ -28,6 +28,14 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.res.painterResource
 import androidx.compose.runtime.remember
+import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.items
+import kotlinx.coroutines.flow.collectLatest
+import androidx.compose.ui.text.style.TextAlign
+import androidx.compose.ui.text.font.FontWeight
+import java.text.SimpleDateFormat
+import java.util.Date
+import java.util.Locale
 
 class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -44,19 +52,9 @@ class MainActivity : ComponentActivity() {
 @Composable
 fun GameLaunchButton() {
     val context = LocalContext.current
-
     Button(
         onClick = {
-            // Загружаем настройки и запускаем игру
-            val settingsRepository = SettingsRepository(context)
-            val gameSettings = settingsRepository.getAllSettings()
-
-            val intent = Intent(context, GameActivity::class.java).apply {
-                putExtra("game_speed", gameSettings.gameSpeed)
-                putExtra("max_cockroaches", gameSettings.maxCockroaches)
-                putExtra("bonus_interval", gameSettings.bonusInterval)
-                putExtra("round_duration", gameSettings.roundDuration)
-            }
+            val intent = Intent(context, PlayerSelectionActivity::class.java)
             context.startActivity(intent)
         },
         modifier = Modifier
@@ -78,7 +76,7 @@ fun GameLaunchButton() {
 @Composable
 fun MainScreen() {
     var selectedTabIndex by remember { mutableIntStateOf(0) }
-    val tabTitles = listOf("Правила игры", "Авторы", "Настройки")
+    val tabTitles = listOf("Правила игры", "Авторы", "Настройки", "Рекорды")
     val context = LocalContext.current
 
     Scaffold(
@@ -89,7 +87,6 @@ fun MainScreen() {
                     .fillMaxWidth()
                     .padding(16.dp)
             ) {
-                // Кнопка регистрации
                 Button(
                     onClick = {
                         val intent = Intent(context, RegistrationActivity::class.java)
@@ -106,13 +103,12 @@ fun MainScreen() {
                     )
                 }
 
-                // Кнопка запуска игры
                 GameLaunchButton()
             }
         }
     ) { innerPadding ->
         Column(modifier = Modifier.padding(innerPadding)) {
-            // Панель вкладок
+
             TabRow(selectedTabIndex = selectedTabIndex) {
                 tabTitles.forEachIndexed { index, title ->
                     Tab(
@@ -123,11 +119,11 @@ fun MainScreen() {
                 }
             }
 
-            // Контент вкладок
             when (selectedTabIndex) {
                 0 -> RulesScreen()
                 1 -> AuthorsScreen()
                 2 -> SettingsScreen()
+                3 -> RecordsScreen()
             }
         }
     }
@@ -155,7 +151,6 @@ fun AuthorsScreen() {
         verticalArrangement = Arrangement.Center,
         horizontalAlignment = Alignment.CenterHorizontally
     ) {
-        // Фото автора
         Image(
             painter = painterResource(id = R.drawable.author_photo),
             contentDescription = "Фото автора",
@@ -193,13 +188,11 @@ fun SettingsScreen() {
     val context = LocalContext.current
     val settingsRepository = remember { SettingsRepository(context) }
 
-    // Загружаем сохраненные настройки при запуске
     var gameSpeed by remember { mutableIntStateOf(settingsRepository.getGameSpeed()) }
     var maxCockroaches by remember { mutableIntStateOf(settingsRepository.getMaxCockroaches()) }
     var bonusInterval by remember { mutableIntStateOf(settingsRepository.getBonusInterval()) }
     var roundDuration by remember { mutableIntStateOf(settingsRepository.getRoundDuration()) }
 
-    // Функция для сохранения всех настроек
     fun saveAllSettings() {
         settingsRepository.saveGameSpeed(gameSpeed)
         settingsRepository.saveMaxCockroaches(maxCockroaches)
@@ -219,7 +212,6 @@ fun SettingsScreen() {
             modifier = Modifier.padding(bottom = 16.dp)
         )
 
-        // Скорость игры
         Text(
             text = "Скорость игры: $gameSpeed",
             style = MaterialTheme.typography.bodyLarge
@@ -237,7 +229,6 @@ fun SettingsScreen() {
                 .padding(bottom = 16.dp)
         )
 
-        // Максимальное количество тараканов
         Text(
             text = "Максимальное количество тараканов: $maxCockroaches",
             style = MaterialTheme.typography.bodyLarge
@@ -255,7 +246,6 @@ fun SettingsScreen() {
                 .padding(bottom = 16.dp)
         )
 
-        // Интервал появления бонусов
         Text(
             text = "Интервал появления бонусов: $bonusInterval сек",
             style = MaterialTheme.typography.bodyLarge
@@ -273,7 +263,6 @@ fun SettingsScreen() {
                 .padding(bottom = 16.dp)
         )
 
-        // Длительность раунда
         Text(
             text = "Длительность раунда: $roundDuration сек",
             style = MaterialTheme.typography.bodyLarge
@@ -291,15 +280,13 @@ fun SettingsScreen() {
                 .padding(bottom = 16.dp)
         )
 
-        // Кнопка сброса настроек
         Button(
             onClick = {
-                // Сбрасываем на значения по умолчанию
                 gameSpeed = 5
                 maxCockroaches = 10
                 bonusInterval = 10
                 roundDuration = 60
-                saveAllSettings() // Сохраняем сброшенные значения
+                saveAllSettings()
             },
             modifier = Modifier
                 .fillMaxWidth()
@@ -308,13 +295,107 @@ fun SettingsScreen() {
             Text("Сбросить настройки")
         }
 
-        // Информация о сохранении
         Text(
             text = "Настройки сохраняются автоматически",
             style = MaterialTheme.typography.bodySmall,
             color = MaterialTheme.colorScheme.onSurfaceVariant,
             modifier = Modifier.padding(top = 8.dp)
         )
+    }
+}
+
+@Composable
+fun RecordsScreen() {
+    val context = LocalContext.current
+    val gameRepository = remember { GameRepository(AppDatabase.getInstance(context)) }
+    var topScores by remember { mutableStateOf<List<ScoreWithPlayerInfo>>(emptyList()) }
+
+    LaunchedEffect(Unit) {
+        gameRepository.getTopScoresWithPlayerInfo().collectLatest { scores ->
+            topScores = scores
+        }
+    }
+
+    Column(
+        modifier = Modifier
+            .fillMaxSize()
+            .padding(16.dp)
+    ) {
+        Text(
+            text = "Топ 10 рекордов",
+            style = MaterialTheme.typography.headlineSmall,
+            modifier = Modifier.padding(bottom = 16.dp)
+        )
+
+        if (topScores.isEmpty()) {
+            Box(
+                modifier = Modifier.fillMaxSize(),
+                contentAlignment = Alignment.Center
+            ) {
+                Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                    Text(
+                        "Рекордов пока нет",
+                        style = MaterialTheme.typography.bodyLarge,
+                        textAlign = TextAlign.Center
+                    )
+                    Text(
+                        "Сыграйте в игру чтобы установить первый рекорд!",
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        modifier = Modifier.padding(top = 8.dp),
+                        textAlign = TextAlign.Center
+                    )
+                }
+            }
+        } else {
+            LazyColumn(
+                modifier = Modifier.fillMaxSize(),
+                verticalArrangement = Arrangement.spacedBy(8.dp)
+            ) {
+                items(topScores) { score ->
+                    Card(
+                        modifier = Modifier.fillMaxWidth()
+                    ) {
+                        Row(
+                            modifier = Modifier.padding(16.dp),
+                            horizontalArrangement = Arrangement.SpaceBetween,
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Column(
+                                modifier = Modifier.weight(1f)
+                            ) {
+                                Text(
+                                    text = score.playerName,
+                                    style = MaterialTheme.typography.bodyLarge,
+                                    fontWeight = FontWeight.Bold
+                                )
+                                Text(
+                                    text = "Курс: ${score.playerCourse}",
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                                )
+                                Text(
+                                    text = "Сложность: ${score.difficulty}",
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                                )
+                                Text(
+                                    text = "Дата: ${SimpleDateFormat("dd.MM.yyyy", Locale.getDefault()).format(Date(score.gameDate))}",
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                                )
+                            }
+                            Text(
+                                text = "${score.score} очков",
+                                style = MaterialTheme.typography.headlineSmall,
+                                color = MaterialTheme.colorScheme.primary,
+                                fontWeight = FontWeight.Bold
+                            )
+                        }
+                    }
+                }
+            }
+        }
     }
 }
 

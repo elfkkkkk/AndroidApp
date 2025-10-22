@@ -34,6 +34,12 @@
             android:exported="false"
             android:theme="@style/Theme.AppCompat.Light.NoActionBar" />
 
+        <activity
+            android:name=".PlayerSelectionActivity"
+            android:exported="false"
+            android:label="Выбор игрока"
+            android:theme="@style/Theme.AppCompat.Light.DarkActionBar" />
+
     </application>
 
 </manifest>

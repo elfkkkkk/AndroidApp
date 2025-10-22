@@ -15,6 +15,10 @@ import android.widget.Spinner
 import android.widget.TextView
 import android.widget.Toast
 import androidx.appcompat.app.AppCompatActivity
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 import java.text.SimpleDateFormat
 import java.util.Calendar
 import java.util.Date
@@ -34,23 +38,25 @@ class RegistrationActivity : AppCompatActivity() {
     private lateinit var ivResultZodiac: ImageView
     private lateinit var llResult: LinearLayout
     private lateinit var tvResultTitle: TextView
-    private lateinit var btnBackToMain: Button  // Кнопка после регистрации
-    private lateinit var btnBackFromForm: Button  // Новая кнопка назад с формы
+    private lateinit var btnBackToMain: Button
+    private lateinit var btnBackFromForm: Button
 
     private var selectedZodiac: String = ""
     private var isFormValid: Boolean = false
+    private lateinit var gameRepository: GameRepository
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         setContentView(R.layout.activity_registration)
 
         initViews()
+        setupGameRepository()
         setupCourseSpinner()
         setupDifficultySeekBar()
         setupBirthDateInput()
         setupFormValidation()
         setupSubmitButton()
-        setupBackButtons()  // Настраиваем обе кнопки назад
+        setupBackButtons()
     }
 
     private fun initViews() {
@@ -66,27 +72,28 @@ class RegistrationActivity : AppCompatActivity() {
         ivResultZodiac = findViewById(R.id.ivResultZodiac)
         llResult = findViewById(R.id.llResult)
         tvResultTitle = findViewById(R.id.tvResultTitle)
-        btnBackToMain = findViewById(R.id.btnBackToMain)  // Кнопка после регистрации
-        btnBackFromForm = findViewById(R.id.btnBackFromForm)  // Новая кнопка с формы
+        btnBackToMain = findViewById(R.id.btnBackToMain)
+        btnBackFromForm = findViewById(R.id.btnBackFromForm)
+    }
+
+    private fun setupGameRepository() {
+        gameRepository = GameRepository(AppDatabase.getInstance(this))
     }
 
     private fun setupBackButtons() {
-        // Кнопка "Назад" с формы (всегда видна)
         btnBackFromForm.setOnClickListener {
             returnToMain()
         }
 
-        // Кнопка "← На главный" после регистрации
         btnBackToMain.setOnClickListener {
             returnToMain()
         }
     }
 
     private fun returnToMain() {
-        // Возвращаемся на главный экран
         val intent = Intent(this, MainActivity::class.java)
         startActivity(intent)
-        finish()  // Закрываем текущую активность
+        finish()
     }
 
     private fun setupCourseSpinner() {
@@ -204,30 +211,49 @@ class RegistrationActivity : AppCompatActivity() {
     private fun setupSubmitButton() {
         btnSubmit.setOnClickListener {
             if (isFormValid) {
-                val player = createPlayer()
-                displayPlayerInfo(player)
+                CoroutineScope(Dispatchers.IO).launch {
+                    try {
+                        val playerId = createPlayer()
+                        withContext(Dispatchers.Main) {
+                            displayPlayerInfo(playerId)
+                        }
+                    } catch (e: Exception) {
+                        withContext(Dispatchers.Main) {
+                            Toast.makeText(this@RegistrationActivity, "Ошибка сохранения: ${e.message}", Toast.LENGTH_SHORT).show()
+                        }
+                    }
+                }
             }
         }
     }
 
-    private fun createPlayer(): Player {
+    private suspend fun createPlayer(): Long {
         val fullName = etFullName.text.toString()
         val gender = if (rgGender.checkedRadioButtonId == R.id.rbMale) "Male" else "Female"
-        val course = spCourse.selectedItemPosition + 1  // Int
-        val difficulty = sbDifficulty.progress  // Int
+        val course = spCourse.selectedItemPosition + 1
+        val difficulty = sbDifficulty.progress
 
         // Parse birth date
         val dateText = etBirthDate.text.toString()
         val parts = dateText.split(".")
         val day = parts[0].toInt()
-        val month = parts[1].toInt() - 1 // Calendar months are 0-based
+        val month = parts[1].toInt() - 1
         val year = parts[2].toInt()
 
         val calendar = Calendar.getInstance()
         calendar.set(year, month, day)
-        val birthDate = calendar.timeInMillis  // Long
+        val birthDate = calendar.timeInMillis
 
-        return Player(fullName, gender, course, difficulty, birthDate, selectedZodiac)
+        val playerEntity = PlayerEntity(
+            fullName = fullName,
+            gender = gender,
+            course = course,
+            difficulty = difficulty,
+            birthDate = birthDate,
+            zodiacSign = selectedZodiac
+        )
+
+        return gameRepository.insertPlayer(playerEntity)
     }
 
     private fun calculateZodiacSign(month: Int, day: Int): String {
@@ -267,38 +293,45 @@ class RegistrationActivity : AppCompatActivity() {
         imageView.setImageResource(resourceId)
     }
 
-    private fun displayPlayerInfo(player: Player) {
-        val dateFormat = SimpleDateFormat("dd.MM.yyyy", Locale.getDefault())
-        val birthDateStr = dateFormat.format(Date(player.birthDate))
+    private suspend fun displayPlayerInfo(playerId: Long) {
+        val player = gameRepository.getPlayerById(playerId)
+        player?.let {
+            val dateFormat = SimpleDateFormat("dd.MM.yyyy", Locale.getDefault())
+            val birthDateStr = dateFormat.format(Date(player.birthDate))
 
-        val info = """
-            Full Name: ${player.fullName}
-            Gender: ${player.gender}
-            Course: ${player.course}
-            Difficulty Level: ${player.difficulty}
-            Birth Date: $birthDateStr
-            Zodiac Sign: ${player.zodiacSign}
-        """.trimIndent()
+            val info = """
+                Full Name: ${player.fullName}
+                Gender: ${player.gender}
+                Course: ${player.course}
+                Difficulty Level: ${player.difficulty}
+                Birth Date: $birthDateStr
+                Zodiac Sign: ${player.zodiacSign}
+            """.trimIndent()
 
-        tvResult.text = info
-        updateZodiacImage(ivResultZodiac, player.zodiacSign)
+            withContext(Dispatchers.Main) {
+                tvResult.text = info
+                updateZodiacImage(ivResultZodiac, player.zodiacSign)
 
-        // Show result section and hide input section
-        tvResultTitle.visibility = TextView.VISIBLE
-        llResult.visibility = LinearLayout.VISIBLE
-        btnBackToMain.visibility = Button.VISIBLE  // Показываем кнопку назад после регистрации
+                tvResultTitle.visibility = TextView.VISIBLE
+                llResult.visibility = LinearLayout.VISIBLE
+                btnBackToMain.visibility = Button.VISIBLE
 
-        // Hide input fields
-        etFullName.visibility = TextView.GONE
-        rgGender.visibility = RadioGroup.GONE
-        spCourse.visibility = Spinner.GONE
-        sbDifficulty.visibility = SeekBar.GONE
-        tvDifficultyLevel.visibility = TextView.GONE
-        etBirthDate.visibility = TextView.GONE
-        ivZodiac.visibility = ImageView.GONE
-        btnSubmit.visibility = Button.GONE
-        btnBackFromForm.visibility = Button.GONE  // Скрываем кнопку назад с формы
+                etFullName.visibility = TextView.GONE
+                rgGender.visibility = RadioGroup.GONE
+                spCourse.visibility = Spinner.GONE
+                sbDifficulty.visibility = SeekBar.GONE
+                tvDifficultyLevel.visibility = TextView.GONE
+                etBirthDate.visibility = TextView.GONE
+                ivZodiac.visibility = ImageView.GONE
+                btnSubmit.visibility = Button.GONE
+                btnBackFromForm.visibility = Button.GONE
 
-        Toast.makeText(this, "Registration successful!", Toast.LENGTH_SHORT).show()
+                Toast.makeText(this@RegistrationActivity, "Registration successful!", Toast.LENGTH_SHORT).show()
+            }
+        } ?: run {
+            withContext(Dispatchers.Main) {
+                Toast.makeText(this@RegistrationActivity, "Ошибка: игрок не найден", Toast.LENGTH_SHORT).show()
+            }
+        }
     }
 }
