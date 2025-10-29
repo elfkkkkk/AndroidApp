@@ -69,4 +69,7 @@ dependencies {
     implementation("org.jetbrains.kotlinx:kotlinx-coroutines-android:1.7.3")
     implementation("org.jetbrains.kotlinx:kotlinx-coroutines-core:1.7.3")
     implementation("androidx.navigation:navigation-compose:2.7.6")
+
+    implementation("androidx.lifecycle:lifecycle-service:2.7.0")
+    implementation("androidx.media:media:1.7.0")
 }

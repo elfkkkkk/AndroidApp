@@ -4,7 +4,12 @@ import android.animation.Animator
 import android.animation.AnimatorListenerAdapter
 import android.animation.ObjectAnimator
 import android.annotation.SuppressLint
+import android.content.Context
 import android.content.DialogInterface
+import android.hardware.Sensor
+import android.hardware.SensorEvent
+import android.hardware.SensorEventListener
+import android.hardware.SensorManager
 import android.os.Bundle
 import android.os.CountDownTimer
 import android.os.Handler
@@ -20,9 +25,10 @@ import androidx.appcompat.app.AppCompatActivity
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
+import kotlin.math.abs
 import kotlin.random.Random
 
-class GameActivity : AppCompatActivity() {
+class GameActivity : AppCompatActivity(), SensorEventListener {
 
     private lateinit var gameContainer: FrameLayout
     private lateinit var scoreTextView: TextView
@@ -32,14 +38,35 @@ class GameActivity : AppCompatActivity() {
     private var gameSpeed = 5
     private var maxCockroaches = 10
     private var roundDuration = 60
+    private var bonusInterval = 15
 
     private var playerId: Long = -1L
     private var playerName: String = ""
     private lateinit var gameRepository: GameRepository
 
     private val activeCockroaches = mutableListOf<ImageView>()
+    private val activeBonuses = mutableListOf<ImageView>()
     private val handler = Handler(Looper.getMainLooper())
     private lateinit var countDownTimer: CountDownTimer
+    private lateinit var bonusTimer: CountDownTimer
+
+    // Система бонусов и акселерометра
+    private lateinit var sensorManager: SensorManager
+    private var accelerometer: Sensor? = null
+    private var isBonusActive = false
+    private var bonusActiveUntil: Long = 0
+    private val BONUS_DURATION = 5000L
+    private var hasAccelerometer = false
+
+    // Переменные для обработки акселерометра
+    private var lastUpdate: Long = 0
+    private var lastX = 0f
+    private var lastY = 0f
+    private var lastZ = 0f
+    private val SHAKE_THRESHOLD = 800f // Чувствительность к тряске
+
+    // Звук
+    private var soundManager: SoundManager? = null
 
     private val insectDrawables = listOf(
         R.drawable.cockroach1,
@@ -48,6 +75,8 @@ class GameActivity : AppCompatActivity() {
         R.drawable.beetle2
     )
 
+    private val bonusDrawable = R.drawable.bonus
+
     @SuppressLint("ClickableViewAccessibility")
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -55,10 +84,9 @@ class GameActivity : AppCompatActivity() {
 
         gameSpeed = intent.getIntExtra("game_speed", 5)
         maxCockroaches = intent.getIntExtra("max_cockroaches", 10)
-
-
         val roundDurationSeconds = intent.getIntExtra("round_duration", 60)
         roundDuration = roundDurationSeconds * 1000
+        bonusInterval = intent.getIntExtra("bonus_interval", 15)
 
         playerId = intent.getLongExtra("player_id", -1L)
         playerName = intent.getStringExtra("player_name") ?: "Unknown"
@@ -67,16 +95,29 @@ class GameActivity : AppCompatActivity() {
         Log.d("GameActivity", " - Скорость: $gameSpeed")
         Log.d("GameActivity", " - Макс. тараканов: $maxCockroaches")
         Log.d("GameActivity", " - Длительность раунда: ${roundDuration / 1000} сек")
+        Log.d("GameActivity", " - Интервал бонусов: $bonusInterval сек")
         Log.d("GameActivity", " - Игрок: $playerName (ID: $playerId)")
 
+        // Инициализация
         gameRepository = GameRepository(AppDatabase.getInstance(this))
+        soundManager = SoundManager.getInstance(this)
+
+        // Инициализация сенсоров
+        sensorManager = getSystemService(Context.SENSOR_SERVICE) as SensorManager
+        accelerometer = sensorManager.getDefaultSensor(Sensor.TYPE_ACCELEROMETER)
+        hasAccelerometer = accelerometer != null
+
+        if (!hasAccelerometer) {
+            Log.w("GameActivity", "Акселерометр не доступен на этом устройстве")
+        } else {
+            Log.d("GameActivity", "Акселерометр инициализирован")
+        }
 
         gameContainer = findViewById(R.id.gameContainer)
         scoreTextView = findViewById(R.id.scoreTextView)
         timerTextView = findViewById(R.id.timerTextView)
 
         updateScore()
-
         startGame()
     }
 
@@ -98,7 +139,267 @@ class GameActivity : AppCompatActivity() {
             }
         }.start()
 
+        // Запускаем таймер бонусов
+        startBonusTimer()
+
         startInsectSpawning()
+    }
+
+    private fun startBonusTimer() {
+        bonusTimer = object : CountDownTimer(roundDuration.toLong(), bonusInterval * 1000L) {
+            private var firstTick = true
+
+            override fun onTick(millisUntilFinished: Long) {
+                if (firstTick) {
+                    // Пропускаем первый тик (он происходит сразу)
+                    firstTick = false
+                    return
+                }
+
+                // Спавним бонус только если сейчас нет активного бонуса
+                if (!isBonusActive && activeBonuses.isEmpty()) {
+                    spawnBonus()
+                }
+            }
+
+            override fun onFinish() {
+                // Не спавним бонус в конце игры
+            }
+        }.start()
+    }
+
+    private fun spawnBonus() {
+        val bonusView = ImageView(this).apply {
+            setImageResource(bonusDrawable)
+            layoutParams = FrameLayout.LayoutParams(100, 100)
+
+            val containerWidth = gameContainer.width
+            val containerHeight = gameContainer.height
+
+            if (containerWidth > 0 && containerHeight > 0) {
+                x = Random.nextFloat() * (containerWidth - 100)
+                y = Random.nextFloat() * (containerHeight - 100)
+            } else {
+                x = 200f
+                y = 200f
+            }
+
+            // Анимация пульсации
+            ObjectAnimator.ofFloat(this, "scaleX", 1f, 1.3f, 1f).apply {
+                duration = 800
+                repeatCount = ObjectAnimator.INFINITE
+                start()
+            }
+            ObjectAnimator.ofFloat(this, "scaleY", 1f, 1.3f, 1f).apply {
+                duration = 800
+                repeatCount = ObjectAnimator.INFINITE
+                start()
+            }
+        }
+
+        bonusView.setOnTouchListener { _, event ->
+            if (event.action == MotionEvent.ACTION_DOWN) {
+                activateBonus(bonusView)
+                true
+            } else {
+                false
+            }
+        }
+
+        gameContainer.addView(bonusView)
+        activeBonuses.add(bonusView)
+
+        Log.d("GameActivity", "Бонус появился на позиции (${bonusView.x}, ${bonusView.y})")
+    }
+
+    private fun activateBonus(bonusView: ImageView) {
+        soundManager?.playInsectScream()
+
+        gameContainer.removeView(bonusView)
+        activeBonuses.remove(bonusView)
+
+        if (hasAccelerometer) {
+            isBonusActive = true
+            bonusActiveUntil = System.currentTimeMillis() + BONUS_DURATION
+
+
+            sensorManager.registerListener(this, accelerometer, SensorManager.SENSOR_DELAY_UI)
+
+            showBonusActivatedMessage()
+
+            Log.d("GameActivity", "Бонус активирован! Длительность: ${BONUS_DURATION}мс")
+
+            // Автоматическое отключение бонуса через BONUS_DURATION
+            handler.postDelayed({
+                if (isBonusActive) {
+                    deactivateBonus()
+                }
+            }, BONUS_DURATION)
+        } else {
+            // Если акселерометра нет, просто показываем сообщение
+            showNoAccelerometerMessage()
+        }
+
+        // Обновляем UI
+        updateScore()
+    }
+
+    private fun showBonusActivatedMessage() {
+        val bonusText = TextView(this).apply {
+            text = "БОНУС АКТИВИРОВАН!\nНаклоняйте телефон!"
+            setTextColor(0xFFFFFF00.toInt())
+            textSize = 16f
+            setBackgroundColor(0x80000000.toInt())
+            setPadding(20, 10, 20, 10)
+
+            layoutParams = FrameLayout.LayoutParams(
+                FrameLayout.LayoutParams.WRAP_CONTENT,
+                FrameLayout.LayoutParams.WRAP_CONTENT
+            ).apply {
+                topMargin = 100
+            }
+        }
+
+        gameContainer.addView(bonusText)
+
+        handler.postDelayed({
+            gameContainer.removeView(bonusText)
+        }, 2000)
+    }
+
+    private fun showNoAccelerometerMessage() {
+        val messageText = TextView(this).apply {
+            text = "Акселерометр не доступен\nБонус не работает"
+            setTextColor(0xFFFF0000.toInt())
+            textSize = 14f
+            setBackgroundColor(0x80000000.toInt())
+            setPadding(20, 10, 20, 10)
+
+            layoutParams = FrameLayout.LayoutParams(
+                FrameLayout.LayoutParams.WRAP_CONTENT,
+                FrameLayout.LayoutParams.WRAP_CONTENT
+            ).apply {
+                topMargin = 100
+            }
+        }
+
+        gameContainer.addView(messageText)
+
+        handler.postDelayed({
+            gameContainer.removeView(messageText)
+        }, 2000)
+    }
+
+    private fun deactivateBonus() {
+        isBonusActive = false
+        sensorManager.unregisterListener(this)
+
+        // Показываем сообщение о завершении бонуса
+        showBonusDeactivatedMessage()
+
+        updateScore()
+        Log.d("GameActivity", "Бонус деактивирован")
+    }
+
+    private fun showBonusDeactivatedMessage() {
+        val bonusText = TextView(this).apply {
+            text = "Бонус завершен"
+            setTextColor(0xFFFFA500.toInt())
+            textSize = 14f
+            setBackgroundColor(0x80000000.toInt())
+            setPadding(20, 10, 20, 10)
+
+            layoutParams = FrameLayout.LayoutParams(
+                FrameLayout.LayoutParams.WRAP_CONTENT,
+                FrameLayout.LayoutParams.WRAP_CONTENT
+            ).apply {
+                topMargin = 100
+            }
+        }
+
+        gameContainer.addView(bonusText)
+
+        handler.postDelayed({
+            gameContainer.removeView(bonusText)
+        }, 1500)
+    }
+
+    // Улучшенный обработчик данных акселерометра
+    override fun onSensorChanged(event: SensorEvent?) {
+        if (!isBonusActive || !hasAccelerometer) return
+
+        event?.let { sensorEvent ->
+            if (sensorEvent.sensor.type == Sensor.TYPE_ACCELEROMETER) {
+                val currentTime = System.currentTimeMillis()
+
+                // Фильтруем слишком частые обновления (не чаще чем раз в 50мс)
+                if ((currentTime - lastUpdate) > 50) {
+                    val timeDiff = currentTime - lastUpdate
+                    lastUpdate = currentTime
+
+                    val x = sensorEvent.values[0]
+                    val y = sensorEvent.values[1]
+                    val z = sensorEvent.values[2]
+
+                    // Рассчитываем изменение положения
+                    val speed = abs(x + y + z - lastX - lastY - lastZ) / timeDiff * 10000
+
+                    // Если изменение достаточно большое - применяем наклон
+                    if (speed > SHAKE_THRESHOLD) {
+                        Log.d("Accelerometer", "Обнаружено движение: speed=$speed")
+                        applyTiltToInsects(x, y)
+                    }
+
+                    lastX = x
+                    lastY = y
+                    lastZ = z
+                }
+            }
+        }
+    }
+
+    private fun applyTiltToInsects(tiltX: Float, tiltY: Float) {
+        // Усиливаем эффект наклона с учетом чувствительности
+        val forceMultiplier = 25f + (gameSpeed * 2) // Зависит от сложности игры
+        val effectiveForceX = tiltX * forceMultiplier
+        val effectiveForceY = tiltY * forceMultiplier
+
+        Log.d("Accelerometer", "Применяем наклон: X=$effectiveForceX, Y=$effectiveForceY")
+
+        // Применяем движение ко всем активным насекомым
+        activeCockroaches.forEach { insect ->
+            // Плавно перемещаем насекомое в направлении наклона
+            var newX = insect.x - effectiveForceX
+            var newY = insect.y - effectiveForceY
+
+            // Проверяем границы экрана
+            val maxX = (gameContainer.width - insect.width).toFloat()
+            val maxY = (gameContainer.height - insect.height).toFloat()
+
+            newX = newX.coerceIn(0f, maxX)
+            newY = newY.coerceIn(0f, maxY)
+
+            // Применяем новую позицию с анимацией для плавности
+            insect.animate()
+                .x(newX)
+                .y(newY)
+                .setDuration(100)
+                .start()
+        }
+    }
+
+    override fun onAccuracyChanged(sensor: Sensor?, accuracy: Int) {
+        // Логируем изменение точности сенсора
+        when (accuracy) {
+            SensorManager.SENSOR_STATUS_ACCURACY_LOW ->
+                Log.d("Accelerometer", "Точность сенсора: НИЗКАЯ")
+            SensorManager.SENSOR_STATUS_ACCURACY_MEDIUM ->
+                Log.d("Accelerometer", "Точность сенсора: СРЕДНЯЯ")
+            SensorManager.SENSOR_STATUS_ACCURACY_HIGH ->
+                Log.d("Accelerometer", "Точность сенсора: ВЫСОКАЯ")
+            SensorManager.SENSOR_STATUS_UNRELIABLE ->
+                Log.d("Accelerometer", "Точность сенсора: НЕНАДЕЖНАЯ")
+        }
     }
 
     private fun startInsectSpawning() {
@@ -115,8 +416,7 @@ class GameActivity : AppCompatActivity() {
 
     private fun calculateSpawnInterval(): Long {
         val interval = (2000 - (gameSpeed * 150)).toLong()
-        Log.d("GameActivity", "Интервал появления: $interval мс")
-        return interval
+        return interval.coerceAtLeast(500) // Минимальный интервал 500мс
     }
 
     private fun spawnInsect() {
@@ -161,7 +461,9 @@ class GameActivity : AppCompatActivity() {
         val moveRunnable = object : Runnable {
             override fun run() {
                 if (activeCockroaches.contains(insect)) {
-                    moveInsect(insect)
+                    if (!isBonusActive) {
+                        moveInsect(insect)
+                    }
                     handler.postDelayed(this, 50)
                 }
             }
@@ -171,8 +473,18 @@ class GameActivity : AppCompatActivity() {
 
     private fun moveInsect(insect: ImageView) {
         val speed = gameSpeed * 2 + Random.nextInt(-2, 3)
-        val directionX = Random.nextInt(-1, 2)
-        val directionY = Random.nextInt(-1, 2)
+
+        val directionX = when (Random.nextInt(0, 3)) {
+            0 -> -1 // влево
+            1 -> 0  // нет движения по X
+            else -> 1 // вправо
+        }
+
+        val directionY = when (Random.nextInt(0, 4)) {
+            0 -> -1 // вверх
+            1 -> 0  // нет движения по Y
+            else -> 1 // вниз (более вероятно)
+        }
 
         val containerWidth = gameContainer.width
         val containerHeight = gameContainer.height
@@ -180,10 +492,17 @@ class GameActivity : AppCompatActivity() {
         var newX = insect.x + directionX * speed
         var newY = insect.y + directionY * speed
 
-        if (newX < 0) newX = 0f
-        if (newX > containerWidth - insect.width) newX = (containerWidth - insect.width).toFloat()
-        if (newY < 0) newY = 0f
-        if (newY > containerHeight - insect.height) newY = (containerHeight - insect.height).toFloat()
+        if (newX < 0) {
+            newX = 0f
+        } else if (newX > containerWidth - insect.width) {
+            newX = (containerWidth - insect.width).toFloat()
+        }
+
+        if (newY < 0) {
+            newY = 0f
+        } else if (newY > containerHeight - insect.height) {
+            newY = (containerHeight - insect.height).toFloat()
+        }
 
         insect.x = newX
         insect.y = newY
@@ -215,13 +534,19 @@ class GameActivity : AppCompatActivity() {
     }
 
     private fun updateScore() {
-        scoreTextView.text = "Игрок: $playerName | Очки: $score"
+        val bonusStatus = if (isBonusActive) " | БОНУС АКТИВЕН!" else ""
+        scoreTextView.text = "Игрок: $playerName | Очки: $score$bonusStatus"
     }
 
     private fun endGame() {
         Log.d("GameActivity", "Завершение игры...")
         handler.removeCallbacksAndMessages(null)
         countDownTimer.cancel()
+        bonusTimer.cancel()
+
+        if (isBonusActive) {
+            deactivateBonus()
+        }
 
         CoroutineScope(Dispatchers.IO).launch {
             if (playerId != -1L) {
@@ -233,19 +558,9 @@ class GameActivity : AppCompatActivity() {
                     )
                     val scoreId = gameRepository.insertScore(scoreEntity)
                     Log.d("GameActivity", "Результат сохранен в БД. ID записи: $scoreId")
-
-                    val topScores = gameRepository.getTopScoresWithPlayerInfo()
-                    topScores.collect { scores ->
-                        Log.d("GameActivity", "Топ рекордов в БД: ${scores.size} записей")
-                        scores.forEachIndexed { index, scoreRecord ->
-                            Log.d("GameActivity", "  ${index + 1}. ${scoreRecord.playerName}: ${scoreRecord.score} очков")
-                        }
-                    }
                 } catch (e: Exception) {
                     Log.e("GameActivity", "Ошибка сохранения результата: ${e.message}")
                 }
-            } else {
-                Log.w("GameActivity", "Не удалось сохранить результат: ID игрока невалиден")
             }
         }
 
@@ -253,6 +568,11 @@ class GameActivity : AppCompatActivity() {
             gameContainer.removeView(insect)
         }
         activeCockroaches.clear()
+
+        activeBonuses.forEach { bonus ->
+            gameContainer.removeView(bonus)
+        }
+        activeBonuses.clear()
 
         showGameOverDialog()
     }
@@ -269,6 +589,18 @@ class GameActivity : AppCompatActivity() {
             .show()
     }
 
+    override fun onPause() {
+        super.onPause()
+        sensorManager.unregisterListener(this)
+    }
+
+    override fun onResume() {
+        super.onResume()
+        if (isBonusActive && hasAccelerometer) {
+            sensorManager.registerListener(this, accelerometer, SensorManager.SENSOR_DELAY_UI)
+        }
+    }
+
     override fun onDestroy() {
         super.onDestroy()
         Log.d("GameActivity", "onDestroy: очистка ресурсов")
@@ -276,6 +608,13 @@ class GameActivity : AppCompatActivity() {
         if (::countDownTimer.isInitialized) {
             countDownTimer.cancel()
         }
+        if (::bonusTimer.isInitialized) {
+            bonusTimer.cancel()
+        }
+
+        sensorManager.unregisterListener(this)
+
         activeCockroaches.clear()
+        activeBonuses.clear()
     }
 }
