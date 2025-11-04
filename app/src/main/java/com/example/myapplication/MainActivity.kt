@@ -37,15 +37,58 @@ import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
 
+// WorkManager imports
+import androidx.work.Constraints
+import androidx.work.ExistingPeriodicWorkPolicy
+import androidx.work.NetworkType
+import androidx.work.PeriodicWorkRequestBuilder
+import androidx.work.WorkManager
+import java.util.concurrent.TimeUnit
+
 class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         enableEdgeToEdge()
+
+        // ЗАПУСКАЕМ WORKMANAGER ДЛЯ ОБНОВЛЕНИЯ КУРСА ЗОЛОТА
+        setupGoldRateWorkManager()
+
         setContent {
             MyApplicationTheme {
                 MainScreen()
             }
         }
+    }
+
+    private fun setupGoldRateWorkManager() {
+        // Создаем ограничения - обновляем только при наличии интернета
+        val constraints = Constraints.Builder()
+            .setRequiredNetworkType(NetworkType.CONNECTED)
+            .build()
+
+        // Создаем периодическую задачу - обновляем каждые 2 часа
+        val goldRateWorkRequest = PeriodicWorkRequestBuilder<GoldRateService>(
+            2, TimeUnit.HOURS, // Интервал повторения
+            15, TimeUnit.MINUTES // Flex интервал (можно выполнить за 15 минут до следующего интервала)
+        ).setConstraints(constraints).build()
+
+        // Запускаем уникальную периодическую задачу
+        WorkManager.getInstance(this).enqueueUniquePeriodicWork(
+            "goldRateUpdate",
+            ExistingPeriodicWorkPolicy.KEEP, // Если задача уже есть - сохраняем ее
+            goldRateWorkRequest
+        )
+
+        // Также запускаем немедленное обновление при старте приложения
+        startImmediateGoldRateUpdate()
+    }
+
+    private fun startImmediateGoldRateUpdate() {
+        val immediateWorkRequest = PeriodicWorkRequestBuilder<GoldRateService>(
+            1, TimeUnit.HOURS // Этот параметр не важен для немедленного запуска
+        ).build()
+
+        WorkManager.getInstance(this).enqueue(immediateWorkRequest)
     }
 }
 
@@ -187,18 +230,14 @@ fun AuthorsScreen() {
 fun SettingsScreen() {
     val context = LocalContext.current
     val settingsRepository = remember { SettingsRepository(context) }
+    val workManager = remember { WorkManager.getInstance(context) }
 
     var gameSpeed by remember { mutableIntStateOf(settingsRepository.getGameSpeed()) }
     var maxCockroaches by remember { mutableIntStateOf(settingsRepository.getMaxCockroaches()) }
     var bonusInterval by remember { mutableIntStateOf(settingsRepository.getBonusInterval()) }
     var roundDuration by remember { mutableIntStateOf(settingsRepository.getRoundDuration()) }
 
-    fun saveAllSettings() {
-        settingsRepository.saveGameSpeed(gameSpeed)
-        settingsRepository.saveMaxCockroaches(maxCockroaches)
-        settingsRepository.saveBonusInterval(bonusInterval)
-        settingsRepository.saveRoundDuration(roundDuration)
-    }
+    val currentGoldPrice = remember { mutableStateOf(GoldRateService.getCurrentGoldPrice()) }
 
     Column(
         modifier = Modifier
@@ -212,73 +251,66 @@ fun SettingsScreen() {
             modifier = Modifier.padding(bottom = 16.dp)
         )
 
-        Text(
-            text = "Скорость игры: $gameSpeed",
-            style = MaterialTheme.typography.bodyLarge
-        )
+        Text(text = "Скорость игры: $gameSpeed", style = MaterialTheme.typography.bodyLarge)
         Slider(
             value = gameSpeed.toFloat(),
-            onValueChange = {
-                gameSpeed = it.toInt()
-                settingsRepository.saveGameSpeed(gameSpeed) // Сохраняем при изменении
-            },
+            onValueChange = { gameSpeed = it.toInt(); settingsRepository.saveGameSpeed(gameSpeed) },
             valueRange = 1f..10f,
             steps = 8,
-            modifier = Modifier
-                .fillMaxWidth()
-                .padding(bottom = 16.dp)
+            modifier = Modifier.fillMaxWidth().padding(bottom = 16.dp)
         )
 
-        Text(
-            text = "Максимальное количество тараканов: $maxCockroaches",
-            style = MaterialTheme.typography.bodyLarge
-        )
+        Text(text = "Макс. тараканов: $maxCockroaches", style = MaterialTheme.typography.bodyLarge)
         Slider(
             value = maxCockroaches.toFloat(),
-            onValueChange = {
-                maxCockroaches = it.toInt()
-                settingsRepository.saveMaxCockroaches(maxCockroaches) // Сохраняем при изменении
-            },
+            onValueChange = { maxCockroaches = it.toInt(); settingsRepository.saveMaxCockroaches(maxCockroaches) },
             valueRange = 1f..20f,
             steps = 18,
-            modifier = Modifier
-                .fillMaxWidth()
-                .padding(bottom = 16.dp)
+            modifier = Modifier.fillMaxWidth().padding(bottom = 16.dp)
         )
 
-        Text(
-            text = "Интервал появления бонусов: $bonusInterval сек",
-            style = MaterialTheme.typography.bodyLarge
-        )
+        Text(text = "Интервал бонусов: $bonusInterval сек", style = MaterialTheme.typography.bodyLarge)
         Slider(
             value = bonusInterval.toFloat(),
-            onValueChange = {
-                bonusInterval = it.toInt()
-                settingsRepository.saveBonusInterval(bonusInterval) // Сохраняем при изменении
-            },
+            onValueChange = { bonusInterval = it.toInt(); settingsRepository.saveBonusInterval(bonusInterval) },
             valueRange = 5f..30f,
             steps = 24,
-            modifier = Modifier
-                .fillMaxWidth()
-                .padding(bottom = 16.dp)
+            modifier = Modifier.fillMaxWidth().padding(bottom = 16.dp)
         )
 
-        Text(
-            text = "Длительность раунда: $roundDuration сек",
-            style = MaterialTheme.typography.bodyLarge
-        )
+        Text(text = "Длительность раунда: $roundDuration сек", style = MaterialTheme.typography.bodyLarge)
         Slider(
             value = roundDuration.toFloat(),
-            onValueChange = {
-                roundDuration = it.toInt()
-                settingsRepository.saveRoundDuration(roundDuration) // Сохраняем при изменении
-            },
+            onValueChange = { roundDuration = it.toInt(); settingsRepository.saveRoundDuration(roundDuration) },
             valueRange = 30f..120f,
             steps = 8,
-            modifier = Modifier
-                .fillMaxWidth()
-                .padding(bottom = 16.dp)
+            modifier = Modifier.fillMaxWidth().padding(bottom = 16.dp)
         )
+
+        Spacer(modifier = Modifier.height(24.dp))
+        Text(text = "Курс золота", style = MaterialTheme.typography.headlineSmall)
+
+        Card(modifier = Modifier.fillMaxWidth().padding(vertical = 8.dp)) {
+            Column(modifier = Modifier.padding(16.dp)) {
+                Text(text = "Текущий курс:", style = MaterialTheme.typography.bodyLarge)
+                Text(
+                    text = "${String.format("%.2f", currentGoldPrice.value)} руб/г",
+                    style = MaterialTheme.typography.headlineMedium,
+                    color = MaterialTheme.colorScheme.primary
+                )
+
+                Button(
+                    onClick = {
+                        val updateRequest = androidx.work.OneTimeWorkRequestBuilder<GoldRateService>().build()
+                        workManager.enqueue(updateRequest)
+                        currentGoldPrice.value = GoldRateService.getCurrentGoldPrice()
+                    },
+                    modifier = Modifier.fillMaxWidth().padding(top = 8.dp)
+                ) {
+                    Text("Обновить курс")
+                }
+            }
+        }
 
         Button(
             onClick = {
@@ -286,24 +318,17 @@ fun SettingsScreen() {
                 maxCockroaches = 10
                 bonusInterval = 10
                 roundDuration = 60
-                saveAllSettings()
+                settingsRepository.saveGameSpeed(gameSpeed)
+                settingsRepository.saveMaxCockroaches(maxCockroaches)
+                settingsRepository.saveBonusInterval(bonusInterval)
+                settingsRepository.saveRoundDuration(roundDuration)
             },
-            modifier = Modifier
-                .fillMaxWidth()
-                .padding(top = 16.dp)
+            modifier = Modifier.fillMaxWidth().padding(top = 16.dp)
         ) {
             Text("Сбросить настройки")
         }
-
-        Text(
-            text = "Настройки сохраняются автоматически",
-            style = MaterialTheme.typography.bodySmall,
-            color = MaterialTheme.colorScheme.onSurfaceVariant,
-            modifier = Modifier.padding(top = 8.dp)
-        )
     }
 }
-
 @Composable
 fun RecordsScreen() {
     val context = LocalContext.current

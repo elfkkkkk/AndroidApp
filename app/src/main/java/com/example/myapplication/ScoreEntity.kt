@@ -17,7 +17,7 @@ data class ScoreEntity(
     @PrimaryKey(autoGenerate = true)
     val id: Long = 0,
     val playerId: Long,
-    val score: Int,
-    val difficulty: Int,
+    val score: Int, // Меняем на Int
+    val difficulty: Int, // Меняем на Int
     val gameDate: Long = System.currentTimeMillis()
 )

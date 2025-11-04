@@ -16,7 +16,6 @@ import android.os.Handler
 import android.os.Looper
 import android.util.Log
 import android.view.MotionEvent
-import android.view.View
 import android.widget.FrameLayout
 import android.widget.ImageView
 import android.widget.TextView
@@ -67,6 +66,11 @@ class GameActivity : AppCompatActivity(), SensorEventListener {
 
     // Звук
     private var soundManager: SoundManager? = null
+
+    // СИСТЕМА ЗОЛОТОГО ТАРАКАНА
+    private var goldCockroachInterval = 20 // Интервал появления золотого таракана в секундах
+    private var goldCockroach: ImageView? = null
+    private val goldCockroachDrawable = R.drawable.gold_cockroach // Добавьте gold_cockroach.png в drawable
 
     private val insectDrawables = listOf(
         R.drawable.cockroach1,
@@ -142,7 +146,149 @@ class GameActivity : AppCompatActivity(), SensorEventListener {
         // Запускаем таймер бонусов
         startBonusTimer()
 
+        // ЗАПУСКАЕМ ТАЙМЕР ЗОЛОТОГО ТАРАКАНА
+        startGoldCockroachTimer()
+
         startInsectSpawning()
+    }
+
+    private fun startGoldCockroachTimer() {
+        Log.d("GameActivity", "Запуск таймера золотого таракана. Интервал: $goldCockroachInterval сек")
+
+        val goldRunnable = object : Runnable {
+            override fun run() {
+                if (goldCockroach == null) {
+                    spawnGoldCockroach()
+                }
+                // Повторяем каждые 20 секунд
+                handler.postDelayed(this, goldCockroachInterval * 1000L)
+            }
+        }
+
+        // Первый золотой таракан через 20 секунд
+        handler.postDelayed(goldRunnable, goldCockroachInterval * 1000L)
+    }
+
+    private fun spawnGoldCockroach() {
+        // Удаляем предыдущего золотого таракана если есть
+        goldCockroach?.let {
+            gameContainer.removeView(it)
+        }
+
+        val goldCockroachView = ImageView(this).apply {
+            setImageResource(goldCockroachDrawable)
+            layoutParams = FrameLayout.LayoutParams(150, 150) // Чуть больше обычного
+
+            val containerWidth = gameContainer.width
+            val containerHeight = gameContainer.height
+
+            if (containerWidth > 0 && containerHeight > 0) {
+                x = Random.nextFloat() * (containerWidth - 150)
+                y = Random.nextFloat() * (containerHeight - 150)
+            } else {
+                x = 200f
+                y = 200f
+            }
+
+            // Анимация блеска для золотого таракана
+            ObjectAnimator.ofFloat(this, "scaleX", 1f, 1.2f, 1f).apply {
+                duration = 1000
+                repeatCount = ObjectAnimator.INFINITE
+                start()
+            }
+            ObjectAnimator.ofFloat(this, "scaleY", 1f, 1.2f, 1f).apply {
+                duration = 1000
+                repeatCount = ObjectAnimator.INFINITE
+                start()
+            }
+
+            // Анимация вращения
+            ObjectAnimator.ofFloat(this, "rotation", 0f, 360f).apply {
+                duration = 3000
+                repeatCount = ObjectAnimator.INFINITE
+                start()
+            }
+        }
+
+        goldCockroachView.setOnTouchListener { _, event ->
+            if (event.action == MotionEvent.ACTION_DOWN) {
+                killGoldCockroach(goldCockroachView)
+                true
+            } else {
+                false
+            }
+        }
+
+        gameContainer.addView(goldCockroachView)
+        goldCockroach = goldCockroachView
+
+        Log.d("GameActivity", "Золотой таракан появился!")
+    }
+
+    private fun killGoldCockroach(cockroach: ImageView) {
+        val goldPrice = GoldRateService.getCurrentGoldPrice()
+        // Начисляем очки пропорционально курсу золота (например, курс * 10)
+        val pointsEarned = (goldPrice / 10).toInt()
+        score += pointsEarned
+
+        Log.d("GameActivity", "Золотой таракан пойман! +$pointsEarned очков (курс: $goldPrice)")
+
+        // Показываем сообщение о начисленных очках
+        showGoldBonusMessage(pointsEarned)
+        updateScore()
+
+        // Анимация исчезновения с эффектом "золотого взрыва"
+        ObjectAnimator.ofFloat(cockroach, "scaleX", 1f, 2f, 0f).apply {
+            duration = 500
+            start()
+        }
+        ObjectAnimator.ofFloat(cockroach, "scaleY", 1f, 2f, 0f).apply {
+            duration = 500
+            addListener(object : AnimatorListenerAdapter() {
+                override fun onAnimationEnd(animation: Animator) {
+                    gameContainer.removeView(cockroach)
+                    goldCockroach = null
+                }
+            })
+            start()
+        }
+    }
+
+    private fun showGoldBonusMessage(points: Int) {
+        val bonusText = TextView(this).apply {
+            text = "ЗОЛОТО!\n+$points очков!"
+            setTextColor(0xFFFFFF00.toInt())
+            textSize = 18f
+            setBackgroundColor(0x80000000.toInt())
+            setPadding(20, 10, 20, 10)
+            gravity = android.view.Gravity.CENTER
+
+            layoutParams = FrameLayout.LayoutParams(
+                FrameLayout.LayoutParams.WRAP_CONTENT,
+                FrameLayout.LayoutParams.WRAP_CONTENT
+            ).apply {
+                gravity = android.view.Gravity.CENTER
+            }
+        }
+
+        gameContainer.addView(bonusText)
+
+        // Анимация появления и исчезновения
+        bonusText.alpha = 0f
+        bonusText.animate()
+            .alpha(1f)
+            .setDuration(500)
+            .withEndAction {
+                bonusText.animate()
+                    .alpha(0f)
+                    .setDuration(500)
+                    .setStartDelay(1000)
+                    .withEndAction {
+                        gameContainer.removeView(bonusText)
+                    }
+                    .start()
+            }
+            .start()
     }
 
     private fun startBonusTimer() {
@@ -221,7 +367,6 @@ class GameActivity : AppCompatActivity(), SensorEventListener {
         if (hasAccelerometer) {
             isBonusActive = true
             bonusActiveUntil = System.currentTimeMillis() + BONUS_DURATION
-
 
             sensorManager.registerListener(this, accelerometer, SensorManager.SENSOR_DELAY_UI)
 
@@ -574,6 +719,12 @@ class GameActivity : AppCompatActivity(), SensorEventListener {
         }
         activeBonuses.clear()
 
+        // ОЧИЩАЕМ ЗОЛОТОГО ТАРАКАНА
+        goldCockroach?.let {
+            gameContainer.removeView(it)
+            goldCockroach = null
+        }
+
         showGameOverDialog()
     }
 
@@ -616,5 +767,11 @@ class GameActivity : AppCompatActivity(), SensorEventListener {
 
         activeCockroaches.clear()
         activeBonuses.clear()
+
+        // Очищаем золотого таракана
+        goldCockroach?.let {
+            gameContainer.removeView(it)
+            goldCockroach = null
+        }
     }
 }
