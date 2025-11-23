@@ -79,4 +79,5 @@ dependencies {
 
     implementation("androidx.work:work-runtime-ktx:2.9.0")
     implementation("org.simpleframework:simple-xml:2.7.1")
+    implementation("com.fasterxml.jackson.dataformat:jackson-dataformat-xml:2.15.2")
 }

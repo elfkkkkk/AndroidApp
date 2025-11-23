@@ -50,8 +50,8 @@ class MainActivity : ComponentActivity() {
         super.onCreate(savedInstanceState)
         enableEdgeToEdge()
 
-        // ЗАПУСКАЕМ WORKMANAGER ДЛЯ ОБНОВЛЕНИЯ КУРСА ЗОЛОТА
         setupGoldRateWorkManager()
+        startImmediateGoldRateUpdate()
 
         setContent {
             MyApplicationTheme {
@@ -61,34 +61,26 @@ class MainActivity : ComponentActivity() {
     }
 
     private fun setupGoldRateWorkManager() {
-        // Создаем ограничения - обновляем только при наличии интернета
-        val constraints = Constraints.Builder()
-            .setRequiredNetworkType(NetworkType.CONNECTED)
+        val constraints = androidx.work.Constraints.Builder()
+            .setRequiredNetworkType(androidx.work.NetworkType.CONNECTED)
             .build()
 
-        // Создаем периодическую задачу - обновляем каждые 2 часа
-        val goldRateWorkRequest = PeriodicWorkRequestBuilder<GoldRateService>(
-            2, TimeUnit.HOURS, // Интервал повторения
-            15, TimeUnit.MINUTES // Flex интервал (можно выполнить за 15 минут до следующего интервала)
+        val goldRateWorkRequest = androidx.work.PeriodicWorkRequestBuilder<GoldRateService>(
+            2, TimeUnit.HOURS,
+            15, TimeUnit.MINUTES
         ).setConstraints(constraints).build()
 
-        // Запускаем уникальную периодическую задачу
-        WorkManager.getInstance(this).enqueueUniquePeriodicWork(
+        androidx.work.WorkManager.getInstance(this).enqueueUniquePeriodicWork(
             "goldRateUpdate",
-            ExistingPeriodicWorkPolicy.KEEP, // Если задача уже есть - сохраняем ее
+            androidx.work.ExistingPeriodicWorkPolicy.KEEP,
             goldRateWorkRequest
         )
-
-        // Также запускаем немедленное обновление при старте приложения
-        startImmediateGoldRateUpdate()
     }
 
     private fun startImmediateGoldRateUpdate() {
-        val immediateWorkRequest = PeriodicWorkRequestBuilder<GoldRateService>(
-            1, TimeUnit.HOURS // Этот параметр не важен для немедленного запуска
-        ).build()
-
-        WorkManager.getInstance(this).enqueue(immediateWorkRequest)
+        val immediateWorkRequest = androidx.work.OneTimeWorkRequestBuilder<GoldRateService>()
+            .build()
+        androidx.work.WorkManager.getInstance(this).enqueue(immediateWorkRequest)
     }
 }
 
@@ -238,6 +230,18 @@ fun SettingsScreen() {
     var roundDuration by remember { mutableIntStateOf(settingsRepository.getRoundDuration()) }
 
     val currentGoldPrice = remember { mutableStateOf(GoldRateService.getCurrentGoldPrice()) }
+    val isLoading = remember { mutableStateOf(false) }
+
+    fun updateGoldRate() {
+        isLoading.value = true
+        val updateRequest = androidx.work.OneTimeWorkRequestBuilder<GoldRateService>().build()
+        workManager.enqueue(updateRequest)
+
+        android.os.Handler(android.os.Looper.getMainLooper()).postDelayed({
+            currentGoldPrice.value = GoldRateService.getCurrentGoldPrice()
+            isLoading.value = false
+        }, 3000)
+    }
 
     Column(
         modifier = Modifier
@@ -251,64 +255,169 @@ fun SettingsScreen() {
             modifier = Modifier.padding(bottom = 16.dp)
         )
 
-        Text(text = "Скорость игры: $gameSpeed", style = MaterialTheme.typography.bodyLarge)
+        Text(
+            text = "Скорость игры: $gameSpeed",
+            style = MaterialTheme.typography.bodyLarge,
+            modifier = Modifier.padding(bottom = 8.dp)
+        )
         Slider(
             value = gameSpeed.toFloat(),
-            onValueChange = { gameSpeed = it.toInt(); settingsRepository.saveGameSpeed(gameSpeed) },
+            onValueChange = {
+                gameSpeed = it.toInt()
+                settingsRepository.saveGameSpeed(gameSpeed)
+            },
             valueRange = 1f..10f,
             steps = 8,
-            modifier = Modifier.fillMaxWidth().padding(bottom = 16.dp)
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(bottom = 16.dp)
         )
 
-        Text(text = "Макс. тараканов: $maxCockroaches", style = MaterialTheme.typography.bodyLarge)
+        Text(
+            text = "Максимальное количество тараканов: $maxCockroaches",
+            style = MaterialTheme.typography.bodyLarge,
+            modifier = Modifier.padding(bottom = 8.dp)
+        )
         Slider(
             value = maxCockroaches.toFloat(),
-            onValueChange = { maxCockroaches = it.toInt(); settingsRepository.saveMaxCockroaches(maxCockroaches) },
+            onValueChange = {
+                maxCockroaches = it.toInt()
+                settingsRepository.saveMaxCockroaches(maxCockroaches)
+            },
             valueRange = 1f..20f,
             steps = 18,
-            modifier = Modifier.fillMaxWidth().padding(bottom = 16.dp)
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(bottom = 16.dp)
         )
 
-        Text(text = "Интервал бонусов: $bonusInterval сек", style = MaterialTheme.typography.bodyLarge)
+        Text(
+            text = "Интервал появления бонусов: $bonusInterval сек",
+            style = MaterialTheme.typography.bodyLarge,
+            modifier = Modifier.padding(bottom = 8.dp)
+        )
         Slider(
             value = bonusInterval.toFloat(),
-            onValueChange = { bonusInterval = it.toInt(); settingsRepository.saveBonusInterval(bonusInterval) },
+            onValueChange = {
+                bonusInterval = it.toInt()
+                settingsRepository.saveBonusInterval(bonusInterval)
+            },
             valueRange = 5f..30f,
             steps = 24,
-            modifier = Modifier.fillMaxWidth().padding(bottom = 16.dp)
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(bottom = 16.dp)
         )
 
-        Text(text = "Длительность раунда: $roundDuration сек", style = MaterialTheme.typography.bodyLarge)
+        Text(
+            text = "Длительность раунда: $roundDuration сек",
+            style = MaterialTheme.typography.bodyLarge,
+            modifier = Modifier.padding(bottom = 8.dp)
+        )
         Slider(
             value = roundDuration.toFloat(),
-            onValueChange = { roundDuration = it.toInt(); settingsRepository.saveRoundDuration(roundDuration) },
+            onValueChange = {
+                roundDuration = it.toInt()
+                settingsRepository.saveRoundDuration(roundDuration)
+            },
             valueRange = 30f..120f,
             steps = 8,
-            modifier = Modifier.fillMaxWidth().padding(bottom = 16.dp)
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(bottom = 24.dp)
         )
 
-        Spacer(modifier = Modifier.height(24.dp))
-        Text(text = "Курс золота", style = MaterialTheme.typography.headlineSmall)
+        Text(
+            text = "Курс золота ЦБ РФ",
+            style = MaterialTheme.typography.headlineSmall,
+            modifier = Modifier.padding(bottom = 16.dp)
+        )
 
-        Card(modifier = Modifier.fillMaxWidth().padding(vertical = 8.dp)) {
-            Column(modifier = Modifier.padding(16.dp)) {
-                Text(text = "Текущий курс:", style = MaterialTheme.typography.bodyLarge)
+        Card(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(bottom = 16.dp),
+            colors = CardDefaults.cardColors(
+                containerColor = MaterialTheme.colorScheme.surfaceVariant
+            )
+        ) {
+            Column(
+                modifier = Modifier.padding(16.dp)
+            ) {
+                Text(
+                    text = "Текущий курс золота:",
+                    style = MaterialTheme.typography.bodyLarge,
+                    modifier = Modifier.padding(bottom = 8.dp)
+                )
+
                 Text(
                     text = "${String.format("%.2f", currentGoldPrice.value)} руб/г",
                     style = MaterialTheme.typography.headlineMedium,
-                    color = MaterialTheme.colorScheme.primary
+                    color = MaterialTheme.colorScheme.primary,
+                    modifier = Modifier.padding(bottom = 16.dp)
                 )
 
                 Button(
-                    onClick = {
-                        val updateRequest = androidx.work.OneTimeWorkRequestBuilder<GoldRateService>().build()
-                        workManager.enqueue(updateRequest)
-                        currentGoldPrice.value = GoldRateService.getCurrentGoldPrice()
-                    },
-                    modifier = Modifier.fillMaxWidth().padding(top = 8.dp)
+                    onClick = { updateGoldRate() },
+                    enabled = !isLoading.value,
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(bottom = 8.dp)
                 ) {
-                    Text("Обновить курс")
+                    if (isLoading.value) {
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.Center
+                        ) {
+                            CircularProgressIndicator(
+                                modifier = Modifier.size(16.dp),
+                                strokeWidth = 2.dp,
+                                color = MaterialTheme.colorScheme.onPrimary
+                            )
+                            Spacer(modifier = Modifier.width(8.dp))
+                            Text("Обновление...")
+                        }
+                    } else {
+                        Text("Обновить курс из ЦБ РФ")
+                    }
                 }
+
+                Text(
+                    text = "• Курс автоматически обновляется каждые 2 часа\n" +
+                            "• Золотой таракан приносит очки пропорционально курсу",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    modifier = Modifier.padding(top = 8.dp)
+                )
+            }
+        }
+
+        Card(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(bottom = 16.dp),
+            colors = CardDefaults.cardColors(
+                containerColor = MaterialTheme.colorScheme.surfaceVariant
+            )
+        ) {
+            Column(
+                modifier = Modifier.padding(16.dp)
+            ) {
+                Text(
+                    text = "Виджет курса золота",
+                    style = MaterialTheme.typography.bodyLarge,
+                    fontWeight = FontWeight.Bold,
+                    modifier = Modifier.padding(bottom = 8.dp)
+                )
+                Text(
+                    text = "Добавьте виджет на домашний экран:\n" +
+                            "1. Нажмите и удерживайте пустое место\n" +
+                            "2. Выберите 'Виджеты'\n" +
+                            "3. Найдите 'MyApplication'\n" +
+                            "4. Перетащите виджет на экран",
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
             }
         }
 
@@ -323,10 +432,25 @@ fun SettingsScreen() {
                 settingsRepository.saveBonusInterval(bonusInterval)
                 settingsRepository.saveRoundDuration(roundDuration)
             },
-            modifier = Modifier.fillMaxWidth().padding(top = 16.dp)
+            colors = ButtonDefaults.buttonColors(
+                containerColor = MaterialTheme.colorScheme.secondaryContainer,
+                contentColor = MaterialTheme.colorScheme.onSecondaryContainer
+            ),
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(top = 8.dp)
         ) {
-            Text("Сбросить настройки")
+            Text("Сбросить настройки по умолчанию")
         }
+
+        Text(
+            text = "Настройки сохраняются автоматически",
+            style = MaterialTheme.typography.bodySmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+            modifier = Modifier
+                .padding(top = 8.dp)
+                .align(Alignment.CenterHorizontally)
+        )
     }
 }
 @Composable

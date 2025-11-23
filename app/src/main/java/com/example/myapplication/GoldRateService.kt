@@ -12,16 +12,17 @@ import okhttp3.OkHttpClient
 import okhttp3.logging.HttpLoggingInterceptor
 import retrofit2.Retrofit
 import retrofit2.converter.simplexml.SimpleXmlConverterFactory
-import retrofit2.http.GET
+import java.text.SimpleDateFormat
+import java.util.*
 import java.util.concurrent.TimeUnit
 
 class GoldRateService(context: Context, params: WorkerParameters) : CoroutineWorker(context, params) {
 
     companion object {
         private const val TAG = "GoldRateService"
-        private var currentGoldPrice: Double = 5000.0
+        private var currentGoldPrice: Double = 0.0
 
-        fun getCurrentGoldPrice(): Double = currentGoldPrice
+        fun getCurrentGoldPrice(): Double = if (currentGoldPrice > 0) currentGoldPrice else 10432.09
 
         private fun setCurrentGoldPrice(price: Double) {
             currentGoldPrice = price
@@ -38,12 +39,14 @@ class GoldRateService(context: Context, params: WorkerParameters) : CoroutineWor
                     appWidgetIds.forEach { appWidgetId ->
                         updateWidget(context, appWidgetManager, appWidgetId)
                     }
+                    Log.d(TAG, "Виджеты обновлены")
                 }
             } catch (e: Exception) {
                 Log.e(TAG, "Ошибка при обновлении виджетов: ${e.message}")
             }
         }
 
+        // обновл текста на экране
         private fun updateWidget(context: Context, appWidgetManager: AppWidgetManager, appWidgetId: Int) {
             val views = android.widget.RemoteViews(context.packageName, R.layout.widget_gold_rate_layout)
 
@@ -56,13 +59,24 @@ class GoldRateService(context: Context, params: WorkerParameters) : CoroutineWor
     }
 
     override suspend fun doWork(): Result = withContext(Dispatchers.IO) {
+        Log.d(TAG, "Запуск обновления курса золота...")
+
         return@withContext try {
-            val realPrice = fetchRealGoldPrice()
-            setCurrentGoldPrice(realPrice)
+            val realPrice = fetchRealGoldPrice() //
+            if (realPrice > 0) {
+                setCurrentGoldPrice(realPrice)
+                Log.d(TAG, "Успешно получен реальный курс: $realPrice")
+            } else {
+                val fallbackPrice = if (currentGoldPrice > 0) currentGoldPrice                                            else 10432.09
+                setCurrentGoldPrice(fallbackPrice)
+                Log.d(TAG, "Используется сохраненный курс: $fallbackPrice")
+            }
+
             notifyWidgetUpdate(applicationContext)
             Result.success()
+
         } catch (e: Exception) {
-            Log.e(TAG, "Ошибка: ${e.message}")
+            Log.e(TAG, "Критическая ошибка: ${e.message}")
             notifyWidgetUpdate(applicationContext)
             Result.success()
         }
@@ -71,41 +85,46 @@ class GoldRateService(context: Context, params: WorkerParameters) : CoroutineWor
     private suspend fun fetchRealGoldPrice(): Double {
         return try {
             val api = createRetrofit()
-            val currentDate = java.text.SimpleDateFormat("dd/MM/yyyy", java.util.Locale.getDefault())
-                .format(java.util.Date())
-            val url = "scripts/xml_metall.asp?date_req1=$currentDate&date_req2=$currentDate"
+            
+            val dateFormat = SimpleDateFormat("dd/MM/yyyy", Locale.getDefault())
+            val today = Date()
+            val dateReq1 = dateFormat.format(today)
+            val dateReq2 = dateFormat.format(today)
 
-            val response = api.getGoldRate(url).execute()
+            Log.d(TAG, "Запрос курса за период: $dateReq1 - $dateReq2")
+
+            val response = api.getGoldRate(dateReq1, dateReq2).execute()
 
             if (response.isSuccessful) {
-                parseGoldPriceFromXml(response.body()?.toString() ?: "")
+                val metallData = response.body()
+                if (metallData != null && metallData.records.isNotEmpty()) {
+                    val record = metallData.records.first()
+                    val price = record.getGoldPrice() // извлекает число из объекта
+
+                    if (price > 0) {
+                        Log.d(TAG, "Успешно распарсен курс: $price")
+                        price
+                    } else {
+                        Log.e(TAG, "Нулевая цена в записи")
+                        0.0
+                    }
+                } else {
+                    Log.e(TAG, "Пустой ответ или нет записей")
+                    0.0
+                }
             } else {
-                5000.0
+                Log.e(TAG, "Ошибка HTTP: ${response.code()} - ${response.message()}")
+                0.0
             }
         } catch (e: Exception) {
-            Log.e(TAG, "Ошибка запроса: ${e.message}")
-            5000.0
-        }
-    }
-
-    private fun parseGoldPriceFromXml(xmlContent: String): Double {
-        return try {
-            val buyPattern = "<Buy>([0-9]+[.,][0-9]+)</Buy>".toRegex()
-            val matchResult = buyPattern.find(xmlContent)
-
-            if (matchResult != null) {
-                matchResult.groupValues[1].replace(",", ".").toDouble()
-            } else {
-                5000.0
-            }
-        } catch (e: Exception) {
-            5000.0
+            Log.e(TAG, "Ошибка запроса к ЦБ: ${e.message}")
+            0.0
         }
     }
 
     private fun createRetrofit(): CbrApi {
         val logging = HttpLoggingInterceptor().apply {
-            level = HttpLoggingInterceptor.Level.BASIC
+            level = HttpLoggingInterceptor.Level.BODY
         }
 
         val client = OkHttpClient.Builder()
